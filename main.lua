@@ -8,24 +8,38 @@ uniform mat4 perspective;
 attribute vec4 VertexNormals;
 
 varying vec4 normals;
+varying vec4 transformed_vertex_position;
 
 vec4 position(mat4 transform_projection, vec4 vertex_position)
 {
-	normals = transform * VertexNormals;	
-	return perspective * transform * vertex_position;
+	normals = transform * VertexNormals;
+	transformed_vertex_position = transform * vertex_position;
+	return perspective * transformed_vertex_position;
 }
 
 ]]
 
 local pixel_shader = [[
 varying vec4 normals;
-vec3 light = vec3(0.0,0.0,-1.0);
+varying vec4 transformed_vertex_position;
+
+vec3 light_direction = vec3(0.0,0.0,-1.0);
+vec3 view_position = vec3(0.0,0.0,0.0);
+float specular_strength = 0.1;
 
 vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 {
 	vec4 texturecolor = Texel(tex, texture_coords);
-	float sim = dot(normals.xyz, light);
-	return vec4(color.xyz*sim,color.a);
+
+	vec3 view_direction = normalize(view_position - transformed_vertex_position.xyz);
+	vec3 reflection_direction = reflect(-light_direction, normals.xyz);
+	float specular_amount = pow(max(dot(view_direction, reflection_direction), 0.0), 4);
+	vec3 specular = specular_strength * specular_amount*vec3(1.0,1.0,1.0);
+
+	vec3 ambient = color.xyz*0.1;
+	float diffuse = max(dot(normals.xyz, light_direction),0.0);
+
+	return vec4(color.xyz*(diffuse+ambient+specular),color.a);
 }
 ]]
 
@@ -34,7 +48,7 @@ local vertex_format = { {"VertexPosition", "float", 3},
     			{"VertexColor", "byte", 4},
 		      }
 
-local pdbfile = "9X49.pdb"
+local pdbfile = "example.pdb"
 
 local GLOBALVARS = {
 			["ZOOM"] = 120,
@@ -141,10 +155,7 @@ function project_2D(triangles, zoom, dpi, width, height)
 end
 
 function love.load()
-	--[[
-	love.profiler = require("profile")
-	love.profiler.start()
-	--]]
+
 	love.graphics.setPointSize(10)
 	local width, height = love.graphics.getDimensions()
 	GLOBALVARS["SCREEN"] = {["x"] = width, ["y"] = height} 
@@ -213,10 +224,10 @@ function model_transform (translation, scale, rotation)
 	local ty = translation[2]
 	local tz = translation[3]
 
-	return { {(sx*s1*s2*s3) + (sx*c1*c3), (sy*c3*s1*s2) - (sy*c1*s3), (sz*c2*s1), tx},
-		 {(sx*c2*s3), (sy*c2*c3), (-1*(sz*s2)), ty},
-		 {(sx*c1*s2*s3)-(sx*s1*c3), (sy*c1*c3*s2)+(sy*s1*s3), (sz*c1*c2), tz},
-		  {0,0,0,1}
+	return { {(sx*s1*s2*s3)+(sx*c1*c3), (sy*c3*s1*s2)-(sy*c1*s3),   (sz*c2*s1), tx},
+		 {              (sx*c2*s3),               (sy*c2*c3), (-1*(sz*s2)), ty},
+		 {(sx*c1*s2*s3)-(sx*s1*c3), (sy*c1*c3*s2)+(sy*s1*s3),   (sz*c1*c2), tz},
+		 {                       0,                        0,            0,  1}
 		}
 
 end
@@ -259,28 +270,19 @@ local perspective = perspective_matrix(90, 1920/1080, 0.01, 1000)
 
 function love.resize(w,h)
 	local width, height = love.graphics.getDimensions()
+	perspective = perspective_matrix(90, width/height, 0.01, 1000)
 	GLOBALVARS["SCREEN"] = {["x"] = width, ["y"] = height} 
 end
 
-love.frame=0
 local time = 0
 function love.update(dt)
 	time = time + dt
-	--[[
-	if love.frame%100 == 0 then	
-		love.report = love.profiler.report(20)
-		print(love.report)
-		love.profiler.reset()
-	end
-	love.frame = love.frame + 1
-	--]]
+
 end
 
 function love.draw()
 
---		print("Current FPS: "..tostring(love.timer.getFPS()))
-		
-		local transform = model_transform({0,0,100},
+		local transform = model_transform({0,0,30},
 						  1,
 						  {time/2,time/2,time/2})
 		love.graphics.setColor(1,1,1,1)
@@ -323,45 +325,4 @@ function rotate_3D(data, theta_x, theta_y, theta_z)
 		data[i].z = output_ry_z
 	end
 end
-
--- Assumes clockwise winding order
-function normal(vert3D_1, vert3D_2, vert3D_3)
-	local sqrt = math.sqrt
-	local vector_v1v2 = {vert3D_2.x-vert3D_1.x, vert3D_2.y-vert3D_1.y, vert3D_2.z-vert3D_1.z}
-	local vector_v1v3 = {vert3D_3.x-vert3D_1.x, vert3D_3.y-vert3D_1.y, vert3D_3.z-vert3D_1.z}
-
-	local cross_product = {
-				["x"] = vector_v1v2[2]*vector_v1v3[3] - vector_v1v2[3]*vector_v1v3[2],
-				["y"] = vector_v1v2[3]*vector_v1v3[1] - vector_v1v2[1]*vector_v1v3[3],
-				["z"] = vector_v1v2[1]*vector_v1v3[2] - vector_v1v2[2]*vector_v1v3[1]
-				}
-
-	local magnitude = sqrt(cross_product.x^2 + cross_product.y^2 + cross_product.z^2)
-	cross_product.x = cross_product.x / magnitude
-	cross_product.y = cross_product.y / magnitude
-	cross_product.z = cross_product.z / magnitude
-	return cross_product
-end
-
-function mag(vec3D)
-	local sqrt = math.sqrt
-	return sqrt(vec3D.x^2 + vec3D.y^2 + vec3D.z^2)
-end
-
-function normalise(vec3D)
-	local magnitude = mag(vec3D)
-	return { ["x"] = vec3D.x/magnitude, ["y"] = vec3D.y/magnitude, ["z"] =  vec3D.z/magnitude}
-end
-
-function cross(vec3D_1, vec3D_2)
-	return {
-		["x"] = vec3D_1.y*vec3D_2.z - vec3D_1.z*vec3D_2.y,
-		["y"] = vec3D_1.z*vec3D_2.x - vec3D_1.x*vec3D_2.z,
-		["z"] = vec3D_1.x*vec3D_2.y - vec3D_1.y*vec3D_2.x,
-		}
-end
-
-function dot(vec3D_1, vec3D_2)
-	return vec3D_1.x*vec3D_2.x + vec3D_1.y*vec3D_2.y + vec3D_1.z*vec3D_2.z
-end	
 
