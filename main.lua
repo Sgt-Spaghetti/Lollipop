@@ -2,7 +2,8 @@ local obj_loader = require("load_obj")
 
 local vertex_shader = [[
 
-uniform mat4 transform;
+uniform mat4 translation;
+uniform mat4 rotation;
 uniform mat4 perspective;
 
 attribute vec4 VertexNormals;
@@ -12,8 +13,8 @@ varying vec4 transformed_vertex_position;
 
 vec4 position(mat4 transform_projection, vec4 vertex_position)
 {
-	normals = transform * VertexNormals;
-	transformed_vertex_position = transform * vertex_position;
+	normals = rotation * VertexNormals;
+	transformed_vertex_position = translation * rotation * vertex_position;
 	return perspective * transformed_vertex_position;
 }
 
@@ -25,7 +26,7 @@ varying vec4 transformed_vertex_position;
 
 vec3 light_direction = vec3(0.0,0.0,-1.0);
 vec3 view_position = vec3(0.0,0.0,0.0);
-float specular_strength = 0.1;
+float specular_strength = 0.128;
 
 vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 {
@@ -34,10 +35,10 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 	vec3 view_direction = normalize(view_position - transformed_vertex_position.xyz);
 	vec3 reflection_direction = reflect(-light_direction, normals.xyz);
 	float specular_amount = pow(max(dot(view_direction, reflection_direction), 0.0), 4);
-	vec3 specular = specular_strength * specular_amount*vec3(1.0,1.0,1.0);
+	vec3 specular = specular_strength * specular_amount*color.xyz;//vec3(1.0,1.0,1.0);
 
-	vec3 ambient = color.xyz*0.1;
-	float diffuse = max(dot(normals.xyz, light_direction),0.0);
+	vec3 ambient = color.xyz*0.3;
+	float diffuse = 0.85 + 0.15*max(dot(normals.xyz, light_direction),0.0);
 
 	return vec4(color.xyz*(diffuse+ambient+specular),color.a);
 }
@@ -48,24 +49,32 @@ local vertex_format = { {"VertexPosition", "float", 3},
     			{"VertexColor", "byte", 4},
 		      }
 
-local pdbfile = "example.pdb"
-
-local GLOBALVARS = {
-			["ZOOM"] = 120,
+local GLOBALVARS = {	
+			["input_file"] = "example.pdb",
+			["ROTATION"] = {},
+			["TRANSLATION"] = {},
 			["CAMERA"] = {["x"] = 0, ["y"] = 0, ["z"] = 1},
 			["LIGANDS"] = {},
 			["POINTS"] = {},
 			["SHAPES"] = {},
+			["colour_series"] = {}
 		   }
+
+function Options(o)
+	for key,value in pairs(o) do
+		GLOBALVARS[key] = value
+	end
+end
+dofile("config.lua")
 
 -- array that holds all the GLOBALVARS["POINTS"]
 -- Each point has an x value, y value, z value and atom type
 
 -- Parse the PDB file and store the atomic coordinates in a 'point' construct
-local file = io.open(pdbfile, "r")
+local file = io.open(GLOBALVARS["input_file"], "r")
 for line in file:lines() do
 		if line:sub(1,4) == "ATOM" then
-			local point = {
+			local point = {	
 					tonumber(line:sub(31,38)),
 					tonumber(line:sub(39,46)),
 					tonumber(line:sub(47,54)),
@@ -97,16 +106,6 @@ for line in file:lines() do
 		end
 end
 
---[[
-GLOBALVARS["POINTS"] = {
-			{0, 0, 0, ["e"] = "C"},
-			--{0.5, 0, 2, ["e"] = "C"},
-			--{0, 0, -1, ["e"] = "O"},
-			--{2, 2, 4, ["e"] = "C"},
-			--{-1, -1, 3, ["e"] = "O"},
-			}
---]]
-
 function generate_icosphere(scale)
 
 	icosphere = obj_loader.load_OBJ("icosphere_s2-smooth.obj", scale)	
@@ -132,31 +131,10 @@ function instance_icosphere(object, origin, colour)
 	return icosphere
 end
 
-
-
--- Project a 3D point to a 2D plane
--- Assumes the projection plane lies at the world origin
--- The camera faces in the positive Z direction from (0,0,0)
-function project_2D(triangles, zoom, dpi, width, height)
-	local half_height = height/2
-	local half_width = width/2
-	for i=1, #triangles do
-		local triangle = triangles[i]
-			 
-		triangle[1] = half_width + (dpi * (triangle[1] / (triangle[3]+zoom)))
-		triangle[2] = height - ((dpi * (triangle[2] / (triangle[3]+zoom))) + half_height)
-
-		triangle[4] = half_width + (dpi * (triangle[4] / (triangle[6]+zoom)))
-		triangle[5] = height - ((dpi * (triangle[5] / (triangle[6]+zoom))) + half_height)
-
-		triangle[7] = half_width + (dpi * (triangle[7] / (triangle[9]+zoom)))
-		triangle[8] = height - ((dpi * (triangle[8] / (triangle[9]+zoom))) + half_height)
-	end
-end
-
 function love.load()
 
-	love.graphics.setPointSize(10)
+	love.keyboard.setKeyRepeat(true)
+
 	local width, height = love.graphics.getDimensions()
 	GLOBALVARS["SCREEN"] = {["x"] = width, ["y"] = height} 
 
@@ -171,42 +149,108 @@ function love.load()
 		return total / #list
 	end
 
+	function max(list)
+		local max = list[1]
+		for i=1, #list do
+			if list[i] > max then
+				max = list[i]
+			end
+		end
+		return max
+	end
+
+	function min(list)
+		local min = list[1]
+		for i=1, #list do
+			if list[i] < min then
+				min = list[i]
+			end
+		end
+		return min
+	end
+
 	local xs = {}
 	local ys = {}
 	local zs = {}
+	local chains = {}
+	local chain_colours = {}
 	for i=1, #GLOBALVARS["POINTS"] do
 		local p = GLOBALVARS["POINTS"][i]
 		xs[#xs+1] = p[1]
 		ys[#ys+1] = p[2]
 		zs[#zs+1] = p[3]
+		chains[p.chain] = true
 	end
+
+	local colour_counter = 1
+	for k,v in pairs(chains) do
+		chain_colours[k] = (colour_counter%#GLOBALVARS["colour_series"])+1
+		colour_counter = colour_counter + 1
+	end
+
+	local max_dimensions = {max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs)}
 
 	-- Translate the PDB from its center to world origin
 	translate_3D(GLOBALVARS["POINTS"], -1*mean(xs), -1*mean(ys), -1*mean(zs))
+	translate_3D(GLOBALVARS["LIGANDS"], -1*mean(xs), -1*mean(ys), -1*mean(zs))
 
 	local icosphere = generate_icosphere(1.5)
 
 	local shapes = {}
 	for i=1, #GLOBALVARS["POINTS"] do
-		if GLOBALVARS["POINTS"][i].e == "C" then
-			local colour = {["r"]=1,
-					["g"]=0.41,
-					["b"]=0.38,
-					["a"] = 1}
+		local point = GLOBALVARS["POINTS"][i]
+		if point.e == "C" then
+			local colour = GLOBALVARS["colour_series"][chain_colours[point.chain]]["C"]
 			shapes[#shapes+1] = instance_icosphere(icosphere, GLOBALVARS["POINTS"][i], colour)
 		else
-			local colour = {["r"]=1,
-					["g"]=0.32,
-					["b"]=0.28,
-					["a"] = 1,}
+			local colour = GLOBALVARS["colour_series"][chain_colours[point.chain]]["X"]
 			shapes[#shapes+1] = instance_icosphere(icosphere, GLOBALVARS["POINTS"][i], colour)
 		end
 	end
+	for i=1, #GLOBALVARS["LIGANDS"] do
+		if GLOBALVARS["LIGANDS"][i]["aa"] == "HEC" then
+				local colour = {["r"]=0.988,
+						["g"]=0.761,
+						["b"]=0.0,
+						["a"] = 1,}
+				shapes[#shapes+1] = instance_icosphere(icosphere, GLOBALVARS["LIGANDS"][i], colour)
+		end
+	end
+
 	GLOBALVARS["SHAPES"] = shapes
+	GLOBALVARS["ROTATION"] = model_transform({0,0,0},1,{0,0,0})
+	GLOBALVARS["TRANSLATION"] = model_transform({0,0,max(max_dimensions)+1},1,{0,0,0})
 
 end
 
-local shader = love.graphics.newShader(pixel_shader, vertex_shader)
+function multiply_mat4(mat4_one, mat4_two)
+	return {
+			{
+			mat4_one[1][1]*mat4_two[1][1] + mat4_one[1][2]*mat4_two[2][1]+mat4_one[1][3]*mat4_two[3][1]+mat4_one[1][4]*mat4_two[4][1],
+			mat4_one[1][1]*mat4_two[1][2] + mat4_one[1][2]*mat4_two[2][2]+mat4_one[1][3]*mat4_two[3][2]+mat4_one[1][4]*mat4_two[4][2],
+			mat4_one[1][1]*mat4_two[1][3] + mat4_one[1][2]*mat4_two[2][3]+mat4_one[1][3]*mat4_two[3][3]+mat4_one[1][4]*mat4_two[4][3],
+			mat4_one[1][1]*mat4_two[1][4] + mat4_one[1][2]*mat4_two[2][4]+mat4_one[1][3]*mat4_two[3][4]+mat4_one[1][4]*mat4_two[4][4],
+			},	
+			{
+			mat4_one[2][1]*mat4_two[1][1] + mat4_one[2][2]*mat4_two[2][1]+mat4_one[2][3]*mat4_two[3][1]+mat4_one[2][4]*mat4_two[4][1],
+			mat4_one[2][1]*mat4_two[1][2] + mat4_one[2][2]*mat4_two[2][2]+mat4_one[2][3]*mat4_two[3][2]+mat4_one[2][4]*mat4_two[4][2],
+			mat4_one[2][1]*mat4_two[1][3] + mat4_one[2][2]*mat4_two[2][3]+mat4_one[2][3]*mat4_two[3][3]+mat4_one[2][4]*mat4_two[4][3],
+			mat4_one[2][1]*mat4_two[1][4] + mat4_one[2][2]*mat4_two[2][4]+mat4_one[2][3]*mat4_two[3][4]+mat4_one[2][4]*mat4_two[4][4],
+			},	
+			{
+			mat4_one[3][1]*mat4_two[1][1] + mat4_one[3][2]*mat4_two[2][1]+mat4_one[3][3]*mat4_two[3][1]+mat4_one[3][4]*mat4_two[4][1],
+			mat4_one[3][1]*mat4_two[1][2] + mat4_one[3][2]*mat4_two[2][2]+mat4_one[3][3]*mat4_two[3][2]+mat4_one[3][4]*mat4_two[4][2],
+			mat4_one[3][1]*mat4_two[1][3] + mat4_one[3][2]*mat4_two[2][3]+mat4_one[3][3]*mat4_two[3][3]+mat4_one[3][4]*mat4_two[4][3],
+			mat4_one[3][1]*mat4_two[1][4] + mat4_one[3][2]*mat4_two[2][4]+mat4_one[3][3]*mat4_two[3][4]+mat4_one[3][4]*mat4_two[4][4],
+			},	
+			{
+			mat4_one[4][1]*mat4_two[1][1] + mat4_one[4][2]*mat4_two[2][1]+mat4_one[4][3]*mat4_two[3][1]+mat4_one[4][4]*mat4_two[4][1],
+			mat4_one[4][1]*mat4_two[1][2] + mat4_one[4][2]*mat4_two[2][2]+mat4_one[4][3]*mat4_two[3][2]+mat4_one[4][4]*mat4_two[4][2],
+			mat4_one[4][1]*mat4_two[1][3] + mat4_one[4][2]*mat4_two[2][3]+mat4_one[4][3]*mat4_two[3][3]+mat4_one[4][4]*mat4_two[4][3],
+			mat4_one[4][1]*mat4_two[1][4] + mat4_one[4][2]*mat4_two[2][4]+mat4_one[4][3]*mat4_two[3][4]+mat4_one[4][4]*mat4_two[4][4],
+			}	
+		}
+end
 
 function model_transform (translation, scale, rotation)
 	local cos = math.cos
@@ -229,27 +273,7 @@ function model_transform (translation, scale, rotation)
 		 {(sx*c1*s2*s3)-(sx*s1*c3), (sy*c1*c3*s2)+(sy*s1*s3),   (sz*c1*c2), tz},
 		 {                       0,                        0,            0,  1}
 		}
-
 end
-function model_rotation(rotation)
-	local cos = math.cos
-	local sin = math.sin
-	local c3 = cos(rotation[3])
-	local s3 = sin(rotation[3])
-	local c2 = cos(rotation[1])
-	local s2 = sin(rotation[1])
-	local c1 = cos(rotation[2])
-	local s1 = sin(rotation[2])
-
-	return { {(s1*s2*s3) + (c1*c3), (c3*s1*s2) - (c1*s3), (c2*s1)},
-		 {(c2*s3), (c2*c3), (-1*(s2))},
-		 {(c1*s2*s3)-(s1*c3), (c1*c3*s2)+(s1*s3), (c1*c2)},
-		  {0,0,0,1}
-		}
-end
-
-
-
 
 function perspective_matrix(fov, aspect, near, far)
 	local tan = math.tan
@@ -266,7 +290,7 @@ function perspective_matrix(fov, aspect, near, far)
 		}
 end
 
-local perspective = perspective_matrix(90, 1920/1080, 0.01, 1000)
+local perspective = perspective_matrix(150, 1920/1080, 0.01, 1000)
 
 function love.resize(w,h)
 	local width, height = love.graphics.getDimensions()
@@ -274,21 +298,50 @@ function love.resize(w,h)
 	GLOBALVARS["SCREEN"] = {["x"] = width, ["y"] = height} 
 end
 
-local time = 0
-function love.update(dt)
-	time = time + dt
-
+function love.keypressed(key, scancode, isrepeat)
+	if key == "w" then
+		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{math.pi/180,0,0}),GLOBALVARS["ROTATION"])
+	elseif key == "s" then
+		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{-math.pi/180,0,0}),GLOBALVARS["ROTATION"])
+	elseif key == "a" then
+		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,-math.pi/180,0}),GLOBALVARS["ROTATION"])
+	elseif key == "d" then
+		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,math.pi/180,0}),GLOBALVARS["ROTATION"])
+	elseif key == "q" then
+		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,0,-math.pi/180}),GLOBALVARS["ROTATION"])
+	elseif key == "e" then
+		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,0,math.pi/180}),GLOBALVARS["ROTATION"])
+	elseif key == "i" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,0,1},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+	elseif key == "k" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,0,-1},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+	elseif key == "j" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({-1,0,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+	elseif key == "l" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({1,0,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+	elseif key == "u" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,-1,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+	elseif key == "o" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,1,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+	elseif key == "escape" then
+		love.event.quit()
+	end
 end
+
+function love.update(dt)
+end
+
+local shader = love.graphics.newShader(pixel_shader, vertex_shader)
 
 function love.draw()
 
-		local transform = model_transform({0,0,30},
-						  1,
-						  {time/2,time/2,time/2})
 		love.graphics.setColor(1,1,1,1)
+		love.graphics.setFrontFaceWinding("cw")
+		love.graphics.setMeshCullMode("back")
 		love.graphics.setShader(shader)
 		shader:send("perspective", perspective)
-		shader:send("transform", transform)
+		shader:send("rotation", GLOBALVARS["ROTATION"])
+		shader:send("translation", GLOBALVARS["TRANSLATION"])
 
 		love.graphics.setDepthMode("lequal", true)
 
@@ -304,25 +357,5 @@ function translate_3D(data, distance_x, distance_y, distance_z)
 			data[i][2] = data[i][2] + distance_y
 			data[i][3] = data[i][3] + distance_z
 		end
-end
-
-function rotate_3D(data, theta_x, theta_y, theta_z)
-	
-	local sin = math.sin
-	local cos = math.cos
-
-	for i=1, #data do
-		local output_rx_x = data[i].x
-		local output_rx_y = cos(theta_x) * data[i].y - sin(theta_x) * data[i].z
-		local output_rx_z = sin(theta_x) * data[i].y + cos(theta_x) * data[i].z
-
-		local output_ry_x = cos(theta_y) * output_rx_x + sin(theta_y) * output_rx_z
-		local output_ry_y = output_rx_y 
-		local output_ry_z = cos(theta_y) * output_rx_z - sin(theta_y) * output_rx_x
-
-		data[i].x = cos(theta_z) * output_ry_x - sin(theta_z) * output_ry_y
-		data[i].y = sin(theta_z) * output_ry_x + cos(theta_z) * output_ry_y
-		data[i].z = output_ry_z
-	end
 end
 
