@@ -30,7 +30,6 @@ float specular_strength = 0.128;
 
 vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 {
-	vec4 texturecolor = Texel(tex, texture_coords);
 
 	vec3 view_direction = normalize(view_position - transformed_vertex_position.xyz);
 	vec3 reflection_direction = reflect(-light_direction, normals.xyz);
@@ -38,9 +37,74 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 	vec3 specular = specular_strength * specular_amount*color.xyz;//vec3(1.0,1.0,1.0);
 
 	vec3 ambient = color.xyz*0.3;
-	float diffuse = 0.85 + 0.15*max(dot(normals.xyz, light_direction),0.0);
+	float diffuse = 0.9 + 0.1*max(dot(normals.xyz, light_direction),0.0);
 
 	return vec4(color.xyz*(diffuse+ambient+specular),color.a);
+}
+]]
+
+local outline_pixel_shader = [[
+
+uniform Image depth_buffer;
+uniform float near;
+uniform float far;
+
+vec2 texelSize = 1.0 / vec2(love_ScreenSize.xy);
+
+vec2 offsets[25] = vec2[25](
+			vec2(-2.0,2.0),
+			vec2(-1.0,2.0),
+			vec2(0.0,2.0),
+			vec2(1.0,2.0),
+			vec2(2.0,2.0),
+			vec2(-2.0,1.0),
+			vec2(-1.0,1.0),
+			vec2(0.0,1.0),
+			vec2(1.0,1.0),
+			vec2(2.0,1.0),
+			vec2(-2.0,0.0),
+			vec2(-1.0,0.0),
+			vec2(0.0,0.0),
+			vec2(1.0,0.0),
+			vec2(2.0,0.0),
+			vec2(-2.0,-1.0),
+			vec2(-1.0,-1.0),
+			vec2(0.0,-1.0),
+			vec2(1.0,-1.0),
+			vec2(2.0,-1.0),
+			vec2(-2.0,-2.0),
+			vec2(-1.0,-2.0),
+			vec2(0.0,-2.0),
+			vec2(1.0,-2.0),
+			vec2(2.0,-2.0)
+			);
+
+float depth_threshold = 0.03;
+
+float linearise_depth(float depth, float near_clipping, float far_clipping)
+{
+	return ((2.0*near*far)/(far+near-(depth*2.0-1.0)*(far-near)))/far;
+}
+
+vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
+{
+	
+	float current_depth = linearise_depth(Texel(depth_buffer, texture_coords).r, near, far);
+	float pixel_count = 0.0;
+	for (int i=0;i<25;i++){
+		float depth = linearise_depth(Texel(depth_buffer, texture_coords + texelSize*offsets[i]).r, near, far);
+		if (current_depth - depth>  depth_threshold){
+			pixel_count += 1.0;
+		}
+	}
+
+	if (pixel_count < 3){
+		vec4 image_color = Texel(tex, texture_coords);
+		return image_color;
+	}
+	else{
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
 }
 ]]
 
@@ -48,6 +112,76 @@ local vertex_format = { {"VertexPosition", "float", 3},
     			{"VertexNormals", "float", 4},
     			{"VertexColor", "byte", 4},
 		      }
+
+
+function multiply_mat4(mat4_one, mat4_two)
+	return {
+			{
+			mat4_one[1][1]*mat4_two[1][1] + mat4_one[1][2]*mat4_two[2][1]+mat4_one[1][3]*mat4_two[3][1]+mat4_one[1][4]*mat4_two[4][1],
+			mat4_one[1][1]*mat4_two[1][2] + mat4_one[1][2]*mat4_two[2][2]+mat4_one[1][3]*mat4_two[3][2]+mat4_one[1][4]*mat4_two[4][2],
+			mat4_one[1][1]*mat4_two[1][3] + mat4_one[1][2]*mat4_two[2][3]+mat4_one[1][3]*mat4_two[3][3]+mat4_one[1][4]*mat4_two[4][3],
+			mat4_one[1][1]*mat4_two[1][4] + mat4_one[1][2]*mat4_two[2][4]+mat4_one[1][3]*mat4_two[3][4]+mat4_one[1][4]*mat4_two[4][4],
+			},	
+			{
+			mat4_one[2][1]*mat4_two[1][1] + mat4_one[2][2]*mat4_two[2][1]+mat4_one[2][3]*mat4_two[3][1]+mat4_one[2][4]*mat4_two[4][1],
+			mat4_one[2][1]*mat4_two[1][2] + mat4_one[2][2]*mat4_two[2][2]+mat4_one[2][3]*mat4_two[3][2]+mat4_one[2][4]*mat4_two[4][2],
+			mat4_one[2][1]*mat4_two[1][3] + mat4_one[2][2]*mat4_two[2][3]+mat4_one[2][3]*mat4_two[3][3]+mat4_one[2][4]*mat4_two[4][3],
+			mat4_one[2][1]*mat4_two[1][4] + mat4_one[2][2]*mat4_two[2][4]+mat4_one[2][3]*mat4_two[3][4]+mat4_one[2][4]*mat4_two[4][4],
+			},	
+			{
+			mat4_one[3][1]*mat4_two[1][1] + mat4_one[3][2]*mat4_two[2][1]+mat4_one[3][3]*mat4_two[3][1]+mat4_one[3][4]*mat4_two[4][1],
+			mat4_one[3][1]*mat4_two[1][2] + mat4_one[3][2]*mat4_two[2][2]+mat4_one[3][3]*mat4_two[3][2]+mat4_one[3][4]*mat4_two[4][2],
+			mat4_one[3][1]*mat4_two[1][3] + mat4_one[3][2]*mat4_two[2][3]+mat4_one[3][3]*mat4_two[3][3]+mat4_one[3][4]*mat4_two[4][3],
+			mat4_one[3][1]*mat4_two[1][4] + mat4_one[3][2]*mat4_two[2][4]+mat4_one[3][3]*mat4_two[3][4]+mat4_one[3][4]*mat4_two[4][4],
+			},	
+			{
+			mat4_one[4][1]*mat4_two[1][1] + mat4_one[4][2]*mat4_two[2][1]+mat4_one[4][3]*mat4_two[3][1]+mat4_one[4][4]*mat4_two[4][1],
+			mat4_one[4][1]*mat4_two[1][2] + mat4_one[4][2]*mat4_two[2][2]+mat4_one[4][3]*mat4_two[3][2]+mat4_one[4][4]*mat4_two[4][2],
+			mat4_one[4][1]*mat4_two[1][3] + mat4_one[4][2]*mat4_two[2][3]+mat4_one[4][3]*mat4_two[3][3]+mat4_one[4][4]*mat4_two[4][3],
+			mat4_one[4][1]*mat4_two[1][4] + mat4_one[4][2]*mat4_two[2][4]+mat4_one[4][3]*mat4_two[3][4]+mat4_one[4][4]*mat4_two[4][4],
+			}	
+		}
+end
+
+function model_transform (translation, scale, rotation)
+	local cos = math.cos
+	local sin = math.sin
+	local c3 = cos(rotation[3])
+	local s3 = sin(rotation[3])
+	local c2 = cos(rotation[1])
+	local s2 = sin(rotation[1])
+	local c1 = cos(rotation[2])
+	local s1 = sin(rotation[2])
+	local sx = 1 or scale[1]
+	local sy = sx or scale[2]
+	local sz = sx or scale[3]
+	local tx = translation[1]
+	local ty = translation[2]
+	local tz = translation[3]
+
+	return { {(sx*s1*s2*s3)+(sx*c1*c3), (sy*c3*s1*s2)-(sy*c1*s3),   (sz*c2*s1), tx},
+		 {              (sx*c2*s3),               (sy*c2*c3), (-1*(sz*s2)), ty},
+		 {(sx*c1*s2*s3)-(sx*s1*c3), (sy*c1*c3*s2)+(sy*s1*s3),   (sz*c1*c2), tz},
+		 {                       0,                        0,            0,  1}
+		}
+end
+
+function perspective_matrix(fov, aspect, near, far)
+	local tan = math.tan
+	local f = tan((fov/2) * (180/math.pi))
+	local top = tan(fov/2)*near
+	local bottom = -top
+	local right = top*aspect
+	local left = -top*aspect
+ 
+	return {	{ (2*near)/(right-left),                     0, (right+left)/(right-left),                        0},
+			{                     0, (2*near)/(top-bottom), (top+bottom)/(top-bottom),                        0},
+			{                     0,                     0,            far/(far-near), (-1*far*near)/(far-near)},
+			{                     0,                     0,                         1,                        0}		
+		}
+end
+
+
 
 local GLOBALVARS = {	
 			["input_file"] = "example.pdb",
@@ -57,7 +191,10 @@ local GLOBALVARS = {
 			["LIGANDS"] = {},
 			["POINTS"] = {},
 			["SHAPES"] = {},
-			["colour_series"] = {}
+			["colour_series"] = {},
+			["PERSPECTIVE"] = perspective_matrix(150, 1920/1080, 20, 200),
+			["NEAR_CLIPPING"] = 10,
+			["FAR_CLIPPING"] = 200,
 		   }
 
 function Options(o)
@@ -221,81 +358,15 @@ function love.load()
 	GLOBALVARS["ROTATION"] = model_transform({0,0,0},1,{0,0,0})
 	GLOBALVARS["TRANSLATION"] = model_transform({0,0,max(max_dimensions)+1},1,{0,0,0})
 
+	canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight())
+	depth_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="depth32f", ["readable"] = true, ["mipmaps"] = "none", ["msaa"] = 0, ["type"]="2d"})
 end
-
-function multiply_mat4(mat4_one, mat4_two)
-	return {
-			{
-			mat4_one[1][1]*mat4_two[1][1] + mat4_one[1][2]*mat4_two[2][1]+mat4_one[1][3]*mat4_two[3][1]+mat4_one[1][4]*mat4_two[4][1],
-			mat4_one[1][1]*mat4_two[1][2] + mat4_one[1][2]*mat4_two[2][2]+mat4_one[1][3]*mat4_two[3][2]+mat4_one[1][4]*mat4_two[4][2],
-			mat4_one[1][1]*mat4_two[1][3] + mat4_one[1][2]*mat4_two[2][3]+mat4_one[1][3]*mat4_two[3][3]+mat4_one[1][4]*mat4_two[4][3],
-			mat4_one[1][1]*mat4_two[1][4] + mat4_one[1][2]*mat4_two[2][4]+mat4_one[1][3]*mat4_two[3][4]+mat4_one[1][4]*mat4_two[4][4],
-			},	
-			{
-			mat4_one[2][1]*mat4_two[1][1] + mat4_one[2][2]*mat4_two[2][1]+mat4_one[2][3]*mat4_two[3][1]+mat4_one[2][4]*mat4_two[4][1],
-			mat4_one[2][1]*mat4_two[1][2] + mat4_one[2][2]*mat4_two[2][2]+mat4_one[2][3]*mat4_two[3][2]+mat4_one[2][4]*mat4_two[4][2],
-			mat4_one[2][1]*mat4_two[1][3] + mat4_one[2][2]*mat4_two[2][3]+mat4_one[2][3]*mat4_two[3][3]+mat4_one[2][4]*mat4_two[4][3],
-			mat4_one[2][1]*mat4_two[1][4] + mat4_one[2][2]*mat4_two[2][4]+mat4_one[2][3]*mat4_two[3][4]+mat4_one[2][4]*mat4_two[4][4],
-			},	
-			{
-			mat4_one[3][1]*mat4_two[1][1] + mat4_one[3][2]*mat4_two[2][1]+mat4_one[3][3]*mat4_two[3][1]+mat4_one[3][4]*mat4_two[4][1],
-			mat4_one[3][1]*mat4_two[1][2] + mat4_one[3][2]*mat4_two[2][2]+mat4_one[3][3]*mat4_two[3][2]+mat4_one[3][4]*mat4_two[4][2],
-			mat4_one[3][1]*mat4_two[1][3] + mat4_one[3][2]*mat4_two[2][3]+mat4_one[3][3]*mat4_two[3][3]+mat4_one[3][4]*mat4_two[4][3],
-			mat4_one[3][1]*mat4_two[1][4] + mat4_one[3][2]*mat4_two[2][4]+mat4_one[3][3]*mat4_two[3][4]+mat4_one[3][4]*mat4_two[4][4],
-			},	
-			{
-			mat4_one[4][1]*mat4_two[1][1] + mat4_one[4][2]*mat4_two[2][1]+mat4_one[4][3]*mat4_two[3][1]+mat4_one[4][4]*mat4_two[4][1],
-			mat4_one[4][1]*mat4_two[1][2] + mat4_one[4][2]*mat4_two[2][2]+mat4_one[4][3]*mat4_two[3][2]+mat4_one[4][4]*mat4_two[4][2],
-			mat4_one[4][1]*mat4_two[1][3] + mat4_one[4][2]*mat4_two[2][3]+mat4_one[4][3]*mat4_two[3][3]+mat4_one[4][4]*mat4_two[4][3],
-			mat4_one[4][1]*mat4_two[1][4] + mat4_one[4][2]*mat4_two[2][4]+mat4_one[4][3]*mat4_two[3][4]+mat4_one[4][4]*mat4_two[4][4],
-			}	
-		}
-end
-
-function model_transform (translation, scale, rotation)
-	local cos = math.cos
-	local sin = math.sin
-	local c3 = cos(rotation[3])
-	local s3 = sin(rotation[3])
-	local c2 = cos(rotation[1])
-	local s2 = sin(rotation[1])
-	local c1 = cos(rotation[2])
-	local s1 = sin(rotation[2])
-	local sx = 1 or scale[1]
-	local sy = sx or scale[2]
-	local sz = sx or scale[3]
-	local tx = translation[1]
-	local ty = translation[2]
-	local tz = translation[3]
-
-	return { {(sx*s1*s2*s3)+(sx*c1*c3), (sy*c3*s1*s2)-(sy*c1*s3),   (sz*c2*s1), tx},
-		 {              (sx*c2*s3),               (sy*c2*c3), (-1*(sz*s2)), ty},
-		 {(sx*c1*s2*s3)-(sx*s1*c3), (sy*c1*c3*s2)+(sy*s1*s3),   (sz*c1*c2), tz},
-		 {                       0,                        0,            0,  1}
-		}
-end
-
-function perspective_matrix(fov, aspect, near, far)
-	local tan = math.tan
-	local f = tan((fov/2) * (180/math.pi))
-	local top = tan(fov/2)*near
-	local bottom = -top
-	local right = top*aspect
-	local left = -top*aspect
- 
-	return {	{ (2*near)/(right-left),                     0, (right+left)/(right-left),                        0},
-			{                     0, (2*near)/(top-bottom), (top+bottom)/(top-bottom),                        0},
-			{                     0,                     0,            far/(far-near), (-1*far*near)/(far-near)},
-			{                     0,                     0,                         1,                        0}		
-		}
-end
-
-local perspective = perspective_matrix(150, 1920/1080, 0.01, 1000)
 
 function love.resize(w,h)
 	local width, height = love.graphics.getDimensions()
-	perspective = perspective_matrix(90, width/height, 0.01, 1000)
 	GLOBALVARS["SCREEN"] = {["x"] = width, ["y"] = height} 
+	canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight())
+	depth_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="depth32f", ["readable"] = true, ["mipmaps"] = "none", ["msaa"] = 0, ["type"]="2d"})
 end
 
 function love.keypressed(key, scancode, isrepeat)
@@ -313,12 +384,26 @@ function love.keypressed(key, scancode, isrepeat)
 		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,0,math.pi/180}),GLOBALVARS["ROTATION"])
 	elseif key == "i" then
 		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,0,1},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+		local clip_near = GLOBALVARS["NEAR_CLIPPING"] + 1
+		local clip_far = GLOBALVARS["FAR_CLIPPING"] + 1
+		-- TODO : check if the models.z component is past the near clipping plane. Only then move the near clipping plane outwards.
+		GLOBALVARS["NEAR_CLIPPING"] = GLOBALVARS["NEAR_CLIPPING"] + 1
+		GLOBALVARS["FAR_CLIPPING"] = clip_far
+		GLOBALVARS["PERSPECTIVE"] = perspective_matrix(150, GLOBALVARS["SCREEN"].x/GLOBALVARS["SCREEN"].y, GLOBALVARS["NEAR_CLIPPING"], GLOBALVARS["FAR_CLIPPING"])
 	elseif key == "k" then
 		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,0,-1},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+		local clip_near = GLOBALVARS["NEAR_CLIPPING"] - 1
+		local clip_far = GLOBALVARS["FAR_CLIPPING"] - 1
+		if clip_near > 0.01 then
+			GLOBALVARS["NEAR_CLIPPING"] = clip_near
+		elseif clip_far > 0.02 then
+			GLOBALVARS["FAR_CLIPPING"] = clip_far
+		end
+		GLOBALVARS["PERSPECTIVE"] = perspective_matrix(150, GLOBALVARS["SCREEN"].x/GLOBALVARS["SCREEN"].y, GLOBALVARS["NEAR_CLIPPING"], GLOBALVARS["FAR_CLIPPING"])
 	elseif key == "j" then
-		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({-1,0,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
-	elseif key == "l" then
 		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({1,0,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+	elseif key == "l" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({-1,0,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
 	elseif key == "u" then
 		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,-1,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
 	elseif key == "o" then
@@ -331,23 +416,40 @@ end
 function love.update(dt)
 end
 
+function love.conf(t)
+	t.window.depth=16
+end
+
 local shader = love.graphics.newShader(pixel_shader, vertex_shader)
+local outline_shader = love.graphics.newShader(outline_pixel_shader)
 
 function love.draw()
+		love.graphics.clear()
+		love.graphics.setColor({1.0,1.0,1.0,1.0})
+		love.graphics.rectangle("fill", 0,0, GLOBALVARS["SCREEN"].x,GLOBALVARS["SCREEN"].y)
+		
+		love.graphics.setCanvas({canvas,nil, ["depthstencil"]=depth_canvas, ["depth"] = true})
+		love.graphics.setDepthMode("lequal", true)
+		love.graphics.clear()
 
-		love.graphics.setColor(1,1,1,1)
-		love.graphics.setFrontFaceWinding("cw")
+		love.graphics.setFrontFaceWinding("ccw")
 		love.graphics.setMeshCullMode("back")
-		love.graphics.setShader(shader)
-		shader:send("perspective", perspective)
+		shader:send("perspective", GLOBALVARS["PERSPECTIVE"])
 		shader:send("rotation", GLOBALVARS["ROTATION"])
 		shader:send("translation", GLOBALVARS["TRANSLATION"])
+		love.graphics.setShader(shader)
 
-		love.graphics.setDepthMode("lequal", true)
 
 		for i=1, #GLOBALVARS["SHAPES"] do
 			love.graphics.draw(GLOBALVARS["SHAPES"][i]["MESH"])
 		end
+		love.graphics.setCanvas()
+		love.graphics.setShader(outline_shader)
+		outline_shader:send("depth_buffer", depth_canvas)
+		outline_shader:send("near", GLOBALVARS["NEAR_CLIPPING"])
+		outline_shader:send("far", GLOBALVARS["FAR_CLIPPING"])
+		love.graphics.draw(canvas)
+		love.graphics.setShader()
 
 end
 
