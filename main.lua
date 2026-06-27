@@ -1,112 +1,5 @@
 local obj_loader = require("load_obj")
 
-local vertex_shader = [[
-
-uniform mat4 translation;
-uniform mat4 rotation;
-uniform mat4 perspective;
-
-attribute vec4 VertexNormals;
-
-varying vec4 normals;
-varying vec4 transformed_vertex_position;
-
-vec4 position(mat4 transform_projection, vec4 vertex_position)
-{
-	normals = rotation * VertexNormals;
-	transformed_vertex_position = translation * rotation * vertex_position;
-	return perspective * transformed_vertex_position;
-}
-
-]]
-
-local pixel_shader = [[
-varying vec4 normals;
-varying vec4 transformed_vertex_position;
-
-vec3 light_direction = vec3(0.0,0.0,-1.0);
-vec3 view_position = vec3(0.0,0.0,0.0);
-float specular_strength = 0.128;
-
-vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
-{
-
-	vec3 view_direction = normalize(view_position - transformed_vertex_position.xyz);
-	vec3 reflection_direction = reflect(-light_direction, normals.xyz);
-	float specular_amount = pow(max(dot(view_direction, reflection_direction), 0.0), 4);
-	vec3 specular = specular_strength * specular_amount*color.xyz;//vec3(1.0,1.0,1.0);
-
-	vec3 ambient = color.xyz*0.3;
-	float diffuse = 0.9 + 0.1*max(dot(normals.xyz, light_direction),0.0);
-
-	return vec4(color.xyz*(diffuse+ambient+specular),color.a);
-}
-]]
-
-local outline_pixel_shader = [[
-
-uniform Image depth_buffer;
-uniform float near;
-uniform float far;
-
-vec2 texelSize = 1.0 / vec2(love_ScreenSize.xy);
-
-vec2 offsets[25] = vec2[25](
-			vec2(-2.0,2.0),
-			vec2(-1.0,2.0),
-			vec2(0.0,2.0),
-			vec2(1.0,2.0),
-			vec2(2.0,2.0),
-			vec2(-2.0,1.0),
-			vec2(-1.0,1.0),
-			vec2(0.0,1.0),
-			vec2(1.0,1.0),
-			vec2(2.0,1.0),
-			vec2(-2.0,0.0),
-			vec2(-1.0,0.0),
-			vec2(0.0,0.0),
-			vec2(1.0,0.0),
-			vec2(2.0,0.0),
-			vec2(-2.0,-1.0),
-			vec2(-1.0,-1.0),
-			vec2(0.0,-1.0),
-			vec2(1.0,-1.0),
-			vec2(2.0,-1.0),
-			vec2(-2.0,-2.0),
-			vec2(-1.0,-2.0),
-			vec2(0.0,-2.0),
-			vec2(1.0,-2.0),
-			vec2(2.0,-2.0)
-			);
-
-float depth_threshold = 0.03;
-
-float linearise_depth(float depth, float near_clipping, float far_clipping)
-{
-	return ((2.0*near*far)/(far+near-(depth*2.0-1.0)*(far-near)))/far;
-}
-
-vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
-{
-	
-	float current_depth = linearise_depth(Texel(depth_buffer, texture_coords).r, near, far);
-	float pixel_count = 0.0;
-	for (int i=0;i<25;i++){
-		float depth = linearise_depth(Texel(depth_buffer, texture_coords + texelSize*offsets[i]).r, near, far);
-		if (current_depth - depth>  depth_threshold){
-			pixel_count += 1.0;
-		}
-	}
-
-	if (pixel_count < 3){
-		vec4 image_color = Texel(tex, texture_coords);
-		return image_color;
-	}
-	else{
-		return vec4(0.0, 0.0, 0.0, 1.0);
-	}
-}
-]]
 
 local vertex_format = { {"VertexPosition", "float", 3},
     			{"VertexNormals", "float", 4},
@@ -204,45 +97,6 @@ function Options(o)
 end
 dofile("config.lua")
 
--- array that holds all the GLOBALVARS["POINTS"]
--- Each point has an x value, y value, z value and atom type
-
--- Parse the PDB file and store the atomic coordinates in a 'point' construct
-local file = io.open(GLOBALVARS["input_file"], "r")
-for line in file:lines() do
-		if line:sub(1,4) == "ATOM" then
-			local point = {	
-					tonumber(line:sub(31,38)),
-					tonumber(line:sub(39,46)),
-					tonumber(line:sub(47,54)),
-					["id"] = tonumber(line:sub(7,11)),
-					["type"] = line:sub(13,16),
-					["aa"] = line:sub(18,20),
-					["chain"] = line:sub(22,22),
-					["aan"] = tonumber(line:sub(23,26)),
-					["e"] = line:sub(78,78)
-				       }
-
-			GLOBALVARS["POINTS"][#GLOBALVARS["POINTS"]+1] = point
-
-		elseif line:sub(1,6) == "HETATM" then
-
-			local point = {	
-					tonumber(line:sub(31,38)),
-					tonumber(line:sub(39,46)),
-					tonumber(line:sub(47,54)),
-					["id"] = tonumber(line:sub(7,11)),
-					["type"] = line:sub(13,16),
-					["aa"] = line:sub(18,20),
-					["chain"] = line:sub(22,22),
-					["aan"] = tonumber(line:sub(23,26)),
-					["e"] = line:sub(78,78)
-				       }
-
-			GLOBALVARS["LIGANDS"][#GLOBALVARS["LIGANDS"]+1] = point
-		end
-end
-
 function generate_icosphere(scale)
 
 	icosphere = obj_loader.load_OBJ("icosphere_s2-smooth.obj", scale)	
@@ -268,7 +122,104 @@ function instance_icosphere(object, origin, colour)
 	return icosphere
 end
 
+
+function love.resize(w,h)
+	local width, height = love.graphics.getDimensions()
+	GLOBALVARS["SCREEN"] = {["x"] = width, ["y"] = height} 
+	geometry_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="rgba16f",["type"]="2d",["readable"] = true})
+	depth_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="depth32f", ["readable"] = true, ["mipmaps"] = "none", ["msaa"] = 0, ["type"]="2d"})
+	ssao_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight(), {["readable"] = true})
+	ssao_blur_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight(), {["readable"] = true})
+	lighting_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight())
+	outline_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight())
+end
+
+function love.keypressed(key, scancode, isrepeat)
+	if key == "w" then
+		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{math.pi/180,0,0}),GLOBALVARS["ROTATION"])
+	elseif key == "s" then
+		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{-math.pi/180,0,0}),GLOBALVARS["ROTATION"])
+	elseif key == "a" then
+		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,-math.pi/180,0}),GLOBALVARS["ROTATION"])
+	elseif key == "d" then
+		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,math.pi/180,0}),GLOBALVARS["ROTATION"])
+	elseif key == "q" then
+		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,0,-math.pi/180}),GLOBALVARS["ROTATION"])
+	elseif key == "e" then
+		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,0,math.pi/180}),GLOBALVARS["ROTATION"])
+	elseif key == "i" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,0,1},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+		local clip_near = GLOBALVARS["NEAR_CLIPPING"] + 1
+		local clip_far = GLOBALVARS["FAR_CLIPPING"] + 1
+		-- TODO : check if the models.z component is past the near clipping plane. Only then move the near clipping plane outwards.
+		GLOBALVARS["NEAR_CLIPPING"] = GLOBALVARS["NEAR_CLIPPING"] + 1
+		GLOBALVARS["FAR_CLIPPING"] = clip_far
+		GLOBALVARS["PERSPECTIVE"] = perspective_matrix(150, GLOBALVARS["SCREEN"].x/GLOBALVARS["SCREEN"].y, GLOBALVARS["NEAR_CLIPPING"], GLOBALVARS["FAR_CLIPPING"])
+	elseif key == "k" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,0,-1},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+		local clip_near = GLOBALVARS["NEAR_CLIPPING"] - 1
+		local clip_far = GLOBALVARS["FAR_CLIPPING"] - 1
+		if clip_near > 0.01 then
+			GLOBALVARS["NEAR_CLIPPING"] = clip_near
+		elseif clip_far > 0.02 then
+			GLOBALVARS["FAR_CLIPPING"] = clip_far
+		end
+		GLOBALVARS["PERSPECTIVE"] = perspective_matrix(150, GLOBALVARS["SCREEN"].x/GLOBALVARS["SCREEN"].y, GLOBALVARS["NEAR_CLIPPING"], GLOBALVARS["FAR_CLIPPING"])
+	elseif key == "j" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({1,0,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+	elseif key == "l" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({-1,0,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+	elseif key == "u" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,-1,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+	elseif key == "o" then
+		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,1,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
+	elseif key == "escape" then
+		love.event.quit()
+	end
+end
+
+
 function love.load()
+
+
+	-- array that holds all the GLOBALVARS["POINTS"]
+	-- Each point has an x value, y value, z value and atom type
+
+	-- Parse the PDB file and store the atomic coordinates in a 'point' construct
+	local file = io.open(GLOBALVARS["input_file"], "r")
+	for line in file:lines() do
+			if line:sub(1,4) == "ATOM" then
+				local point = {	
+						tonumber(line:sub(31,38)),
+						tonumber(line:sub(39,46)),
+						tonumber(line:sub(47,54)),
+						["id"] = tonumber(line:sub(7,11)),
+						["type"] = line:sub(13,16),
+						["aa"] = line:sub(18,20),
+						["chain"] = line:sub(22,22),
+						["aan"] = tonumber(line:sub(23,26)),
+						["e"] = line:sub(78,78)
+					       }
+
+				GLOBALVARS["POINTS"][#GLOBALVARS["POINTS"]+1] = point
+
+			elseif line:sub(1,6) == "HETATM" then
+
+				local point = {	
+						tonumber(line:sub(31,38)),
+						tonumber(line:sub(39,46)),
+						tonumber(line:sub(47,54)),
+						["id"] = tonumber(line:sub(7,11)),
+						["type"] = line:sub(13,16),
+						["aa"] = line:sub(18,20),
+						["chain"] = line:sub(22,22),
+						["aan"] = tonumber(line:sub(23,26)),
+						["e"] = line:sub(78,78)
+					       }
+
+				GLOBALVARS["LIGANDS"][#GLOBALVARS["LIGANDS"]+1] = point
+			end
+	end
 
 	love.keyboard.setKeyRepeat(true)
 
@@ -358,99 +309,143 @@ function love.load()
 	GLOBALVARS["ROTATION"] = model_transform({0,0,0},1,{0,0,0})
 	GLOBALVARS["TRANSLATION"] = model_transform({0,0,max(max_dimensions)+1},1,{0,0,0})
 
-	canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight())
-	depth_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="depth32f", ["readable"] = true, ["mipmaps"] = "none", ["msaa"] = 0, ["type"]="2d"})
-end
+	geometry_shader = love.graphics.newShader("normal_pass.fs", "geometry_pass.vs")
+	ssao_shader = love.graphics.newShader("ssao_pass.fs", "ssao_pass.vs")
+	ssao_blur_shader = love.graphics.newShader("blur_pass.fs")
+	lighting_shader = love.graphics.newShader("lighting_pass.fs", "lighting_pass.vs")
+	outline_shader = love.graphics.newShader("outline_pass.fs")
 
-function love.resize(w,h)
-	local width, height = love.graphics.getDimensions()
-	GLOBALVARS["SCREEN"] = {["x"] = width, ["y"] = height} 
-	canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight())
+	geometry_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="rgba16f",["type"]="2d",["readable"] = true})
 	depth_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="depth32f", ["readable"] = true, ["mipmaps"] = "none", ["msaa"] = 0, ["type"]="2d"})
-end
+	ssao_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight(), {["readable"] = true})
+	ssao_blur_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight(), {["readable"] = true})
+	lighting_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight())
 
-function love.keypressed(key, scancode, isrepeat)
-	if key == "w" then
-		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{math.pi/180,0,0}),GLOBALVARS["ROTATION"])
-	elseif key == "s" then
-		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{-math.pi/180,0,0}),GLOBALVARS["ROTATION"])
-	elseif key == "a" then
-		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,-math.pi/180,0}),GLOBALVARS["ROTATION"])
-	elseif key == "d" then
-		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,math.pi/180,0}),GLOBALVARS["ROTATION"])
-	elseif key == "q" then
-		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,0,-math.pi/180}),GLOBALVARS["ROTATION"])
-	elseif key == "e" then
-		GLOBALVARS["ROTATION"] = multiply_mat4(model_transform({0,0,0},1,{0,0,math.pi/180}),GLOBALVARS["ROTATION"])
-	elseif key == "i" then
-		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,0,1},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
-		local clip_near = GLOBALVARS["NEAR_CLIPPING"] + 1
-		local clip_far = GLOBALVARS["FAR_CLIPPING"] + 1
-		-- TODO : check if the models.z component is past the near clipping plane. Only then move the near clipping plane outwards.
-		GLOBALVARS["NEAR_CLIPPING"] = GLOBALVARS["NEAR_CLIPPING"] + 1
-		GLOBALVARS["FAR_CLIPPING"] = clip_far
-		GLOBALVARS["PERSPECTIVE"] = perspective_matrix(150, GLOBALVARS["SCREEN"].x/GLOBALVARS["SCREEN"].y, GLOBALVARS["NEAR_CLIPPING"], GLOBALVARS["FAR_CLIPPING"])
-	elseif key == "k" then
-		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,0,-1},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
-		local clip_near = GLOBALVARS["NEAR_CLIPPING"] - 1
-		local clip_far = GLOBALVARS["FAR_CLIPPING"] - 1
-		if clip_near > 0.01 then
-			GLOBALVARS["NEAR_CLIPPING"] = clip_near
-		elseif clip_far > 0.02 then
-			GLOBALVARS["FAR_CLIPPING"] = clip_far
-		end
-		GLOBALVARS["PERSPECTIVE"] = perspective_matrix(150, GLOBALVARS["SCREEN"].x/GLOBALVARS["SCREEN"].y, GLOBALVARS["NEAR_CLIPPING"], GLOBALVARS["FAR_CLIPPING"])
-	elseif key == "j" then
-		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({1,0,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
-	elseif key == "l" then
-		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({-1,0,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
-	elseif key == "u" then
-		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,-1,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
-	elseif key == "o" then
-		GLOBALVARS["TRANSLATION"] = multiply_mat4(model_transform({0,1,0},1,{0,0,0}),GLOBALVARS["TRANSLATION"])
-	elseif key == "escape" then
-		love.event.quit()
+
+	-- SSAO stuff
+
+	function lerp(a,b,f)
+		return  a + f * (b-a)
 	end
-end
+	function normalise(vec3)
+		local magnitude = math.sqrt(vec3[1]^2 + vec3[2]^2 + vec3[3]^2)
+		return {vec3[1]/magnitude, vec3[2]/magnitude, vec3[3]/magnitude}
+	end
 
-function love.update(dt)
-end
+	local random = math.random
+	local kernel_samples = 64
+	sample_kernel = {}
+	for i=1, kernel_samples do
+		local scale = (i-1)/kernel_samples
+		scale = lerp (0.1,1,scale*scale)
 
-function love.conf(t)
-	t.window.depth=16
-end
+		local sample = { (random()*2-1)*scale,
+				(random()*2)*scale,
+				-random()*scale
+				}
+		sample_kernel[#sample_kernel+1] = normalise(sample)
+	end
 
-local shader = love.graphics.newShader(pixel_shader, vertex_shader)
-local outline_shader = love.graphics.newShader(outline_pixel_shader)
+	noise_data = love.image.newImageData(4,4,"rgba8", noise_kernel)
+	local noise_dimensions = 16 -- 4x4
+	for i=0,3 do
+		for j=0,3 do
+			noise_data:setPixel(j,i,random()*2-1, random()*2-1,0,1)
+		end
+	end
+	noise_texture = love.graphics.newImage(noise_data)
+	noise_texture:setWrap("repeat", "repeat")
+end
 
 function love.draw()
-		love.graphics.clear()
-		love.graphics.setColor({1.0,1.0,1.0,1.0})
-		love.graphics.rectangle("fill", 0,0, GLOBALVARS["SCREEN"].x,GLOBALVARS["SCREEN"].y)
-		
-		love.graphics.setCanvas({canvas,nil, ["depthstencil"]=depth_canvas, ["depth"] = true})
+
+		-- Geometry Pass: Bake depth and normals	
+	
+		love.graphics.setCanvas({geometry_canvas, ["depthstencil"]=depth_canvas, ["depth"] = true})
 		love.graphics.setDepthMode("lequal", true)
 		love.graphics.clear()
 
 		love.graphics.setFrontFaceWinding("ccw")
 		love.graphics.setMeshCullMode("back")
-		shader:send("perspective", GLOBALVARS["PERSPECTIVE"])
-		shader:send("rotation", GLOBALVARS["ROTATION"])
-		shader:send("translation", GLOBALVARS["TRANSLATION"])
-		love.graphics.setShader(shader)
+		geometry_shader:send("perspective", GLOBALVARS["PERSPECTIVE"])
+		geometry_shader:send("rotation", GLOBALVARS["ROTATION"])
+		geometry_shader:send("translation", GLOBALVARS["TRANSLATION"])
+		love.graphics.setShader(geometry_shader)
 
 
 		for i=1, #GLOBALVARS["SHAPES"] do
 			love.graphics.draw(GLOBALVARS["SHAPES"][i]["MESH"])
 		end
+
+		-- ssao pass
+
+		love.graphics.setShader()
+		love.graphics.setCanvas({ssao_canvas, ["depth"]=true})
+		love.graphics.clear()
+		love.graphics.setDepthMode("lequal", true)
+		ssao_shader:send("perspective", GLOBALVARS["PERSPECTIVE"])
+		ssao_shader:send("rotation", GLOBALVARS["ROTATION"])
+		ssao_shader:send("translation", GLOBALVARS["TRANSLATION"])
+		ssao_shader:send("normals_buffer", geometry_canvas)
+		ssao_shader:send("depth_buffer", depth_canvas)
+		ssao_shader:send("near", GLOBALVARS["NEAR_CLIPPING"])
+		ssao_shader:send("far", GLOBALVARS["FAR_CLIPPING"])
+		ssao_shader:send("sample_kernel", unpack(sample_kernel))
+		ssao_shader:send("noise_kernel", noise_texture)
+		love.graphics.setShader(ssao_shader)
+
+		for i=1, #GLOBALVARS["SHAPES"] do
+			love.graphics.draw(GLOBALVARS["SHAPES"][i]["MESH"])
+		end
 		love.graphics.setCanvas()
-		love.graphics.setShader(outline_shader)
+		love.graphics.setShader()
+		love.graphics.clear()
+		love.graphics.draw(ssao_canvas)
+
+		love.graphics.setCanvas(ssao_blur_canvas)
+		love.graphics.clear()
+		love.graphics.setShader(ssao_blur)
+		love.graphics.draw(ssao_canvas)
+
+		love.graphics.setCanvas()
+		love.graphics.clear()
+		love.graphics.setColor({1.0,1.0,1.0,1.0})
+		love.graphics.rectangle("fill", 0,0, GLOBALVARS["SCREEN"].x,GLOBALVARS["SCREEN"].y)
+		love.graphics.setShader()
+		love.graphics.draw(ssao_blur_canvas)
+		-- lighting pass: add colours
+		love.graphics.setShader()
+		love.graphics.setCanvas({lighting_canvas, ["depth"]=true})
+		love.graphics.clear()
+		love.graphics.setDepthMode("lequal", true)
+		lighting_shader:send("perspective", GLOBALVARS["PERSPECTIVE"])
+		lighting_shader:send("rotation", GLOBALVARS["ROTATION"])
+		lighting_shader:send("translation", GLOBALVARS["TRANSLATION"])
+		lighting_shader:send("normals_buffer", geometry_canvas)
+		lighting_shader:send("ssao_buffer", ssao_blur_canvas)
+		love.graphics.setShader(lighting_shader)
+
+		for i=1, #GLOBALVARS["SHAPES"] do
+			love.graphics.draw(GLOBALVARS["SHAPES"][i]["MESH"])
+		end
+		love.graphics.setCanvas()
+		love.graphics.setShader()
+		love.graphics.draw(lighting_canvas)
+
+		-- outline pass
+
+		love.graphics.setCanvas()	
 		outline_shader:send("depth_buffer", depth_canvas)
 		outline_shader:send("near", GLOBALVARS["NEAR_CLIPPING"])
 		outline_shader:send("far", GLOBALVARS["FAR_CLIPPING"])
-		love.graphics.draw(canvas)
+		love.graphics.setShader(outline_shader)
+		love.graphics.draw(lighting_canvas)
 		love.graphics.setShader()
 
+end
+
+function love.update(dt)
+	print(love.timer.getFPS())
 end
 
 function translate_3D(data, distance_x, distance_y, distance_z)
