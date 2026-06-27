@@ -21,7 +21,7 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 	for (int i=0; i<9; i++){
 		average += Texel(ssao, texture_coords + kernel[i]*texel_size).r;
 	}
-	average /= 18;
+	average /= 9;
 	return vec4(average, average, average, color.a);
 	return vec4( average, average, average, color.a);
 }

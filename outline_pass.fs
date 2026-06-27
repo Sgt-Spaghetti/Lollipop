@@ -51,7 +51,10 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 		}
 	}
 
-	if (pixel_count < 3){
+	if (current_depth > 0.999 && pixel_count < 3){
+		return vec4(0.0,0.0,0.0,0.0);
+	}
+	else if (pixel_count < 3){
 		vec4 image_color = Texel(tex, texture_coords);
 		return image_color;
 	}

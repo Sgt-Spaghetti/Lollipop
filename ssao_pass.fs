@@ -6,8 +6,7 @@ uniform float far;
 uniform vec3 sample_kernel[64];
 uniform Image noise_kernel;
 
-varying mat4 projection;
-varying vec4 transformed_vertex_position;
+uniform mat4 projection;
 
 float radius = 1;
 
@@ -21,21 +20,22 @@ float linearise_depth(float depth, float near, float far)
 
 vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 {
-	vec3 normal = Texel(normals_buffer, screen_coords*texel_size).rbg;
+	vec3 normal = Texel(normals_buffer, texture_coords).rbg;
 
 	vec2 noise_scale = love_ScreenSize.xy / 4;
-	vec3 noise = Texel(noise_kernel, texture_coords*noise_scale).xyz;
+	vec3 noise = Texel(noise_kernel, screen_coords*noise_scale).xyz;
 
-	float current_depth = linearise_depth(Texel(depth_buffer, screen_coords/love_ScreenSize.xy).r,near,far);
+	float current_depth = linearise_depth(Texel(depth_buffer, texture_coords).r,near,far);
+	vec3 current_position = Texel(tex, texture_coords).xyz;
 
 	vec3 tangent = normalize(noise - normal * dot(noise, normal));
 	vec3 bitangent = cross(normal, tangent);
 	mat3 TBN = mat3(tangent, bitangent, normal);
 
 	float occlusion = 0.0;
-	for (int i=0; i<64; i++){
+	for (int i=0; i<16; i++){
 		vec3 sample_position = TBN * sample_kernel[i];
-		sample_position = transformed_vertex_position.xyz + sample_position * radius;
+		sample_position = current_position + sample_position * radius;
 		vec4 offset = projection * vec4(sample_position, 1.0);
 		offset.xyz /= offset.w;
 		offset.xyz = offset.xyz * 0.5 + 0.5;
@@ -48,7 +48,7 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 		}
 	}
 
-	occlusion = 1.0 - (occlusion / 64);
+	occlusion = 1.0 - (occlusion / 16);
 
 	return vec4(occlusion, occlusion, occlusion,color.a);
 }

@@ -126,8 +126,13 @@ end
 function love.resize(w,h)
 	local width, height = love.graphics.getDimensions()
 	GLOBALVARS["SCREEN"] = {["x"] = width, ["y"] = height} 
-	geometry_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="rgba16f",["type"]="2d",["readable"] = true})
-	depth_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="depth32f", ["readable"] = true, ["mipmaps"] = "none", ["msaa"] = 0, ["type"]="2d"})
+
+	geometry_vertex_positions_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="rgba16f",["type"]="2d",["readable"] = true})
+	geometry_perspective_vertex_positions_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="rgba16f",["type"]="2d",["readable"] = true})
+	geometry_normals_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="rgba16f",["type"]="2d",["readable"] = true})
+	geometry_colours_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="rgba16f",["type"]="2d",["readable"] = true})
+	geometry_depth_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="depth32f", ["readable"] = true, ["mipmaps"] = "none", ["msaa"] = 0, ["type"]="2d"})
+
 	ssao_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight(), {["readable"] = true})
 	ssao_blur_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight(), {["readable"] = true})
 	lighting_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight())
@@ -309,14 +314,17 @@ function love.load()
 	GLOBALVARS["ROTATION"] = model_transform({0,0,0},1,{0,0,0})
 	GLOBALVARS["TRANSLATION"] = model_transform({0,0,max(max_dimensions)+1},1,{0,0,0})
 
-	geometry_shader = love.graphics.newShader("normal_pass.fs", "geometry_pass.vs")
-	ssao_shader = love.graphics.newShader("ssao_pass.fs", "ssao_pass.vs")
+	geometry_shader = love.graphics.newShader("geometry_pass.fs", "geometry_pass.vs")
+	ssao_shader = love.graphics.newShader("ssao_pass.fs")
 	ssao_blur_shader = love.graphics.newShader("blur_pass.fs")
-	lighting_shader = love.graphics.newShader("lighting_pass.fs", "lighting_pass.vs")
+	lighting_shader = love.graphics.newShader("lighting_pass.fs")
 	outline_shader = love.graphics.newShader("outline_pass.fs")
 
-	geometry_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="rgba16f",["type"]="2d",["readable"] = true})
-	depth_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="depth32f", ["readable"] = true, ["mipmaps"] = "none", ["msaa"] = 0, ["type"]="2d"})
+	geometry_vertex_positions_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="rgba16f",["type"]="2d",["readable"] = true})
+	geometry_perspective_vertex_positions_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="rgba16f",["type"]="2d",["readable"] = true})
+	geometry_normals_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="rgba16f",["type"]="2d",["readable"] = true})
+	geometry_colours_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="rgba16f",["type"]="2d",["readable"] = true})
+	geometry_depth_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(),love.graphics.getPixelHeight(), {["format"]="depth32f", ["readable"] = true, ["mipmaps"] = "none", ["msaa"] = 0, ["type"]="2d"})
 	ssao_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight(), {["readable"] = true})
 	ssao_blur_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight(), {["readable"] = true})
 	lighting_canvas = love.graphics.newCanvas(love.graphics.getPixelWidth(), love.graphics.getPixelHeight())
@@ -333,7 +341,7 @@ function love.load()
 	end
 
 	local random = math.random
-	local kernel_samples = 64
+	local kernel_samples = 16
 	sample_kernel = {}
 	for i=1, kernel_samples do
 		local scale = (i-1)/kernel_samples
@@ -359,9 +367,16 @@ end
 
 function love.draw()
 
-		-- Geometry Pass: Bake depth and normals	
-	
-		love.graphics.setCanvas({geometry_canvas, ["depthstencil"]=depth_canvas, ["depth"] = true})
+		-- Geometry Pass: Bake transformed positions, block colours, depth and normals	
+		love.graphics.setCanvas({
+						{geometry_vertex_positions_canvas},
+						{geometry_perspective_vertex_positions_canvas},
+						{geometry_colours_canvas},
+						{geometry_normals_canvas},
+						["depthstencil"] = geometry_depth_canvas,
+						["depth"] = true
+					})
+
 		love.graphics.setDepthMode("lequal", true)
 		love.graphics.clear()
 
@@ -379,68 +394,42 @@ function love.draw()
 
 		-- ssao pass
 
-		love.graphics.setShader()
-		love.graphics.setCanvas({ssao_canvas, ["depth"]=true})
+		love.graphics.setCanvas(ssao_canvas)
 		love.graphics.clear()
-		love.graphics.setDepthMode("lequal", true)
-		ssao_shader:send("perspective", GLOBALVARS["PERSPECTIVE"])
-		ssao_shader:send("rotation", GLOBALVARS["ROTATION"])
-		ssao_shader:send("translation", GLOBALVARS["TRANSLATION"])
-		ssao_shader:send("normals_buffer", geometry_canvas)
-		ssao_shader:send("depth_buffer", depth_canvas)
+		ssao_shader:send("projection", GLOBALVARS["PERSPECTIVE"])
+		ssao_shader:send("normals_buffer", geometry_normals_canvas)
+		ssao_shader:send("depth_buffer", geometry_depth_canvas)
 		ssao_shader:send("near", GLOBALVARS["NEAR_CLIPPING"])
 		ssao_shader:send("far", GLOBALVARS["FAR_CLIPPING"])
 		ssao_shader:send("sample_kernel", unpack(sample_kernel))
 		ssao_shader:send("noise_kernel", noise_texture)
 		love.graphics.setShader(ssao_shader)
-
-		for i=1, #GLOBALVARS["SHAPES"] do
-			love.graphics.draw(GLOBALVARS["SHAPES"][i]["MESH"])
-		end
-		love.graphics.setCanvas()
-		love.graphics.setShader()
-		love.graphics.clear()
-		love.graphics.draw(ssao_canvas)
+		love.graphics.draw(geometry_vertex_positions_canvas)
 
 		love.graphics.setCanvas(ssao_blur_canvas)
 		love.graphics.clear()
 		love.graphics.setShader(ssao_blur)
 		love.graphics.draw(ssao_canvas)
 
-		love.graphics.setCanvas()
-		love.graphics.clear()
-		love.graphics.setColor({1.0,1.0,1.0,1.0})
-		love.graphics.rectangle("fill", 0,0, GLOBALVARS["SCREEN"].x,GLOBALVARS["SCREEN"].y)
-		love.graphics.setShader()
-		love.graphics.draw(ssao_blur_canvas)
 		-- lighting pass: add colours
-		love.graphics.setShader()
-		love.graphics.setCanvas({lighting_canvas, ["depth"]=true})
-		love.graphics.clear()
-		love.graphics.setDepthMode("lequal", true)
-		lighting_shader:send("perspective", GLOBALVARS["PERSPECTIVE"])
-		lighting_shader:send("rotation", GLOBALVARS["ROTATION"])
-		lighting_shader:send("translation", GLOBALVARS["TRANSLATION"])
-		lighting_shader:send("normals_buffer", geometry_canvas)
-		lighting_shader:send("ssao_buffer", ssao_blur_canvas)
-		love.graphics.setShader(lighting_shader)
 
-		for i=1, #GLOBALVARS["SHAPES"] do
-			love.graphics.draw(GLOBALVARS["SHAPES"][i]["MESH"])
-		end
-		love.graphics.setCanvas()
-		love.graphics.setShader()
-		love.graphics.draw(lighting_canvas)
+		love.graphics.setCanvas(lighting_canvas)
+		love.graphics.clear()
+		lighting_shader:send("normals_buffer", geometry_normals_canvas)
+		lighting_shader:send("ssao_buffer", ssao_blur_canvas)
+		lighting_shader:send("transformed_vertex_position", geometry_vertex_positions_canvas)
+		love.graphics.setShader(lighting_shader)
+		love.graphics.draw(geometry_colours_canvas)
 
 		-- outline pass
-
 		love.graphics.setCanvas()	
-		outline_shader:send("depth_buffer", depth_canvas)
+		outline_shader:send("depth_buffer", geometry_depth_canvas)
 		outline_shader:send("near", GLOBALVARS["NEAR_CLIPPING"])
 		outline_shader:send("far", GLOBALVARS["FAR_CLIPPING"])
+		love.graphics.setColor({1.0,1.0,1.0,1.0})
+		love.graphics.rectangle("fill", 0,0, GLOBALVARS["SCREEN"].x,GLOBALVARS["SCREEN"].y)
 		love.graphics.setShader(outline_shader)
 		love.graphics.draw(lighting_canvas)
-		love.graphics.setShader()
 
 end
 
