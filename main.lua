@@ -434,7 +434,7 @@ function love.draw()
 end
 
 function love.update(dt)
-	print(love.timer.getFPS())
+	--print(love.timer.getFPS())
 end
 
 function translate_3D(data, distance_x, distance_y, distance_z)

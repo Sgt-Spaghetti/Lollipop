@@ -1,7 +1,7 @@
 Options{
 
-input_file = "9X49.pdb",
-image_path = "lollypop.png",
+input_file = "example.pdb",
+image_path = "lollipop.png",
 
 rotation_speed = 1,
 translation_speed = 1,
