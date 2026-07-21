@@ -275,7 +275,7 @@ function love.load()
 		chains[p.chain] = true
 	end
 
-	local colour_counter = 1
+	local colour_counter = 0
 	for k,v in pairs(chains) do
 		chain_colours[k] = (colour_counter%#GLOBALVARS["colour_series"])+1
 		colour_counter = colour_counter + 1
@@ -341,7 +341,7 @@ function love.load()
 	end
 
 	local random = math.random
-	local kernel_samples = 16
+	local kernel_samples = GLOBALVARS["ssao_samples"]
 	sample_kernel = {}
 	for i=1, kernel_samples do
 		local scale = (i-1)/kernel_samples
@@ -401,6 +401,7 @@ function love.draw()
 		ssao_shader:send("depth_buffer", geometry_depth_canvas)
 		ssao_shader:send("near", GLOBALVARS["NEAR_CLIPPING"])
 		ssao_shader:send("far", GLOBALVARS["FAR_CLIPPING"])
+		ssao_shader:send("ssao_samples", GLOBALVARS["ssao_samples"])
 		ssao_shader:send("sample_kernel", unpack(sample_kernel))
 		ssao_shader:send("noise_kernel", noise_texture)
 		love.graphics.setShader(ssao_shader)

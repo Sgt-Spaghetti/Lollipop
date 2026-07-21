@@ -3,7 +3,8 @@ uniform Image depth_buffer;
 uniform float near;
 uniform float far;
 
-uniform vec3 sample_kernel[64];
+uniform int ssao_samples;
+uniform vec3 sample_kernel[128];
 uniform Image noise_kernel;
 
 uniform mat4 projection;
@@ -33,7 +34,7 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 	mat3 TBN = mat3(tangent, bitangent, normal);
 
 	float occlusion = 0.0;
-	for (int i=0; i<16; i++){
+	for (int i=0; i<ssao_samples; i++){
 		vec3 sample_position = TBN * sample_kernel[i];
 		sample_position = current_position + sample_position * radius;
 		vec4 offset = projection * vec4(sample_position, 1.0);
@@ -48,7 +49,7 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords)
 		}
 	}
 
-	occlusion = 1.0 - (occlusion / 16);
+	occlusion = 1.0 - (occlusion / ssao_samples);
 
 	return vec4(occlusion, occlusion, occlusion,color.a);
 }
